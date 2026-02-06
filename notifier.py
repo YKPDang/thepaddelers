@@ -108,3 +108,41 @@ class NotificationService:
             logger.error(f"Exception while sending notification: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+
+    def send_reservation_notification(self, slot_time: str, date: str) -> bool:
+        """
+        Send notification that a slot has been reserved and keepalive is active.
+
+        Args:
+            slot_time: The reserved slot time in HH:MM format
+            date: Target date
+
+        Returns:
+            True if notification sent successfully, False otherwise
+        """
+        if not len(self.apprise):
+            logger.error(
+                "Cannot send notification: no Apprise services configured successfully"
+            )
+            return False
+
+        title = "🎾 Slot Reserved!"
+        body = (
+            f"Auto-booked slot {slot_time} on {date}\n\n"
+            f"Keepalive is active — reservation will be renewed every ~4m50s.\n"
+            f"Press Ctrl+C to stop and release the reservation."
+        )
+
+        try:
+            logger.info(f"Sending reservation notification for {slot_time}")
+            result = self.apprise.notify(body=body, title=title)
+            if result:
+                logger.info("Reservation notification sent successfully")
+                return True
+            else:
+                logger.error("Failed to send reservation notification")
+                return False
+        except Exception as e:
+            logger.error(f"Exception while sending reservation notification: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False

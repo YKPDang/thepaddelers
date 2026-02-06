@@ -27,6 +27,10 @@ class Config:
     # Chrome
     chrome_path: str | None = None  # Path to Chrome executable
     headless: bool = True  # Run in headless mode
+    # Auto-booking
+    auto_book: bool = False
+    booking_email: str = ""
+    booking_password: str = ""
 
     def __post_init__(self):
         if self.priority_times is None:
@@ -42,6 +46,13 @@ class Config:
             raise ValueError("TIME_RANGE_START is required")
         if not self.time_range_end:
             raise ValueError("TIME_RANGE_END is required")
+
+        # Validate auto-book credentials
+        if self.auto_book:
+            if not self.booking_email or not self.booking_password:
+                raise ValueError(
+                    "BOOKING_EMAIL and BOOKING_PASSWORD are required when --auto-book is enabled"
+                )
 
         # Validate duration
         if self.duration_minutes not in [60, 90, 120]:
@@ -174,6 +185,22 @@ def load_config() -> Config:
         help="Run Chrome with UI visible",
         default=None,
     )
+    parser.add_argument(
+        "--auto-book",
+        action="store_true",
+        help="Automatically book the best available slot and keep the reservation alive",
+        default=None,
+    )
+    parser.add_argument(
+        "--booking-email",
+        help="Email address for Padellen account login",
+        default=None,
+    )
+    parser.add_argument(
+        "--booking-password",
+        help="Password for Padellen account login",
+        default=None,
+    )
 
     args = parser.parse_args()
 
@@ -260,6 +287,20 @@ def load_config() -> Config:
     elif os.getenv("HEADLESS"):
         headless = os.getenv("HEADLESS", "true").lower() != "false"
 
+    # Determine auto_book mode
+    auto_book = config_data.get("auto_book", False)
+    if args.auto_book:
+        auto_book = True
+    elif os.getenv("AUTO_BOOK"):
+        auto_book = os.getenv("AUTO_BOOK", "false").lower() in ("true", "1", "yes")
+
+    booking_email = _resolve(
+        args.booking_email, "BOOKING_EMAIL", config_data, "booking_email"
+    )
+    booking_password = _resolve(
+        args.booking_password, "BOOKING_PASSWORD", config_data, "booking_password"
+    )
+
     config = Config(
         apprise_urls=apprise_urls,
         target_date=target_date,
@@ -275,6 +316,9 @@ def load_config() -> Config:
         retry_backoff=retry_backoff,
         chrome_path=chrome_path,
         headless=headless,
+        auto_book=auto_book,
+        booking_email=booking_email,
+        booking_password=booking_password,
     )
 
     config.validate()

@@ -18,5 +18,8 @@
   "max_retries": 3,
   "retry_backoff": 2,
   "headless": true,
-  "chrome_path": null
+  "chrome_path": null,
+  "auto_book": false,
+  "booking_email": null,
+  "booking_password": null
 }
