@@ -1,0 +1,14 @@
+services:
+  padellen-monitor:
+    build: .
+    container_name: padellen-monitor
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./availability_state.json:/app/availability_state.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
