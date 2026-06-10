@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 
 from config import Config, load_config
-from scraper import PadellenScraper
+from scraper import PadellenScraper, DateNotBookableError
 from state import StateTracker
 from notifier import NotificationService
 
@@ -199,6 +199,13 @@ def main():
                         scraper.select_date(config.target_date)
                         available_slots = scraper.get_available_slots(time_range)
                         break  # Success, exit retry loop
+                    except DateNotBookableError as e:
+                        # Date isn't open for booking yet — not an error. Treat
+                        # as "no slots" and just wait for the next poll instead
+                        # of retrying or backing off.
+                        logger.info(f"{e}. Waiting until next check.")
+                        available_slots = []
+                        break
                     except Exception as e:
                         logger.warning(
                             f"Attempt {attempt + 1}/{config.max_retries} failed: {e}"

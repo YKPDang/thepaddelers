@@ -15,6 +15,14 @@ import undetected_chromedriver as uc
 logger = logging.getLogger(__name__)
 
 
+class DateNotBookableError(Exception):
+    """The target date is reachable but not yet open for booking.
+
+    Distinct from real errors: the monitor should treat this as "no slots yet"
+    and simply wait for the next poll, not retry or back off aggressively.
+    """
+
+
 def find_chrome_executable() -> str | None:
     """Locate a Chrome/Chromium binary across platforms and release channels.
 
@@ -136,6 +144,26 @@ class PadellenScraper:
     SUMMARY_CONTINUE_ID = "bookings-summary-popup-match-type-continue"
     SUMMARY_BACKDROP_ID = "bookings-summary-popup-backdrop"
 
+    # Calendar navigation element IDs
+    CALENDAR_MONTHS_ID = "bookings-date-step-calendar-navigation-months"
+    CALENDAR_FORWARD_ID = "bookings-date-step-calendar-arrow-forward"
+
+    # Month names as shown in the calendar header (the site renders Dutch)
+    DUTCH_MONTHS = {
+        "januari": 1,
+        "februari": 2,
+        "maart": 3,
+        "april": 4,
+        "mei": 5,
+        "juni": 6,
+        "juli": 7,
+        "augustus": 8,
+        "september": 9,
+        "oktober": 10,
+        "november": 11,
+        "december": 12,
+    }
+
     def __init__(
         self,
         headless: bool = True,
@@ -227,15 +255,120 @@ class PadellenScraper:
         duration_element.click()
         logger.info(f"Duration {duration_minutes} minutes selected")
 
+    def _get_displayed_month(self) -> tuple[int, int] | None:
+        """Return (year, month) currently shown in the calendar header, or None.
+
+        The header element's text looks like "juni, 2026".
+        """
+        try:
+            header = self.driver.find_element(By.ID, self.CALENDAR_MONTHS_ID)
+            text = (header.get_attribute("textContent") or header.text or "").strip()
+        except Exception:
+            return None
+
+        match = re.search(r"([A-Za-z]+)\D+(\d{4})", text)
+        if not match:
+            return None
+        month = self.DUTCH_MONTHS.get(match.group(1).lower())
+        if not month:
+            return None
+        return int(match.group(2)), month
+
+    def _is_forward_enabled(self) -> bool:
+        """Whether the calendar's forward arrow can advance to the next month.
+
+        The site marks the arrow with `cursor-pointer` when navigable and
+        `text-white` (muted/disabled) once it hits the booking-window limit.
+        """
+        try:
+            el = self.driver.find_element(By.ID, self.CALENDAR_FORWARD_ID)
+            return "cursor-pointer" in (el.get_attribute("class") or "")
+        except Exception:
+            return False
+
+    def _click_forward_month(self) -> None:
+        """Advance the calendar to the next month.
+
+        The forward control is an SVG, so a normal click is unreliable; we
+        dispatch a bubbling MouseEvent on it instead.
+        """
+        self.wait.until(
+            EC.presence_of_element_located((By.ID, self.CALENDAR_FORWARD_ID))
+        )
+        self.driver.execute_script(
+            "document.getElementById(arguments[0])"
+            ".dispatchEvent(new MouseEvent('click', { bubbles: true }));",
+            self.CALENDAR_FORWARD_ID,
+        )
+
     def select_date(self, target_date: str) -> None:
         """
-        Select the target date from the calendar.
+        Select the target date from the calendar, navigating forward through
+        months if the target is not currently displayed.
 
         Args:
             target_date: Date in ISO format (YYYY-MM-DD)
         """
+        target_year = int(target_date[:4])
+        target_month = int(target_date[5:7])
         date_element_id = f"bookings-date-step-calendar-day-{target_date}"
         logger.info(f"Selecting date {target_date}...")
+
+        # Wait for the calendar header to be present and readable.
+        self.wait.until(
+            EC.presence_of_element_located((By.ID, self.CALENDAR_MONTHS_ID))
+        )
+        try:
+            self.wait.until(lambda d: self._get_displayed_month() is not None)
+        except TimeoutException:
+            logger.warning(
+                "Could not read calendar month header; "
+                "attempting to click the day directly"
+            )
+
+        # Advance month-by-month until the calendar shows the target month.
+        max_advances = 24  # don't navigate more than ~2 years ahead
+        for _ in range(max_advances + 1):
+            displayed = self._get_displayed_month()
+            if displayed is None:
+                break
+            if displayed == (target_year, target_month):
+                logger.info(f"Calendar showing target month {target_year}-{target_month:02d}")
+                break
+            if displayed > (target_year, target_month):
+                raise ValueError(
+                    f"Calendar is showing {displayed[0]}-{displayed[1]:02d}, "
+                    f"which is past target {target_date}; cannot navigate backward"
+                )
+
+            # The forward arrow is disabled once we reach the booking-window
+            # limit, so a future date may simply not be bookable yet.
+            if not self._is_forward_enabled():
+                raise DateNotBookableError(
+                    f"Date {target_date} is not yet bookable: the calendar cannot "
+                    f"advance past {displayed[0]}-{displayed[1]:02d} "
+                    f"(booking-window limit reached)"
+                )
+
+            logger.info(
+                f"Calendar at {displayed[0]}-{displayed[1]:02d}, "
+                f"advancing toward {target_year}-{target_month:02d}"
+            )
+            self._click_forward_month()
+
+            # Wait for the header to actually change before reading it again.
+            try:
+                WebDriverWait(self.driver, self.wait_timeout).until(
+                    lambda d, prev=displayed: self._get_displayed_month() != prev
+                )
+            except TimeoutException:
+                logger.warning("Calendar did not advance after clicking forward")
+                break
+        else:
+            raise ValueError(
+                f"Target month for {target_date} not reachable "
+                f"within {max_advances} months"
+            )
 
         date_element = self.wait.until(
             EC.element_to_be_clickable((By.ID, date_element_id))
@@ -244,8 +377,8 @@ class PadellenScraper:
         # Verify the date is available
         classes = date_element.get_attribute("class") or ""
         if "cursor-not-allowed" in classes:
-            raise ValueError(
-                f"Date {target_date} is not available (cursor-not-allowed)"
+            raise DateNotBookableError(
+                f"Date {target_date} is not available (cursor-not-allowed)" 
             )
 
         date_element.click()
