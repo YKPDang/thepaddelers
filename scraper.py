@@ -1,4 +1,9 @@
 import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
 import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,6 +13,111 @@ from selenium.common.exceptions import TimeoutException, StaleElementReferenceEx
 import undetected_chromedriver as uc
 
 logger = logging.getLogger(__name__)
+
+
+def find_chrome_executable() -> str | None:
+    """Locate a Chrome/Chromium binary across platforms and release channels.
+
+    undetected-chromedriver's built-in detection misses non-standard installs
+    (Chrome Beta/Dev/Canary, per-user installs), so we check the Windows
+    registry and common locations ourselves before falling back to uc.
+    """
+    candidates: list[str] = []
+
+    if sys.platform == "win32":
+        # Registry App Paths covers whatever channel is actually installed.
+        try:
+            import winreg
+
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(
+                        root,
+                        r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+                    ) as key:
+                        path, _ = winreg.QueryValueEx(key, "")
+                        if path:
+                            candidates.append(path)
+                except OSError:
+                    continue
+        except ImportError:
+            pass
+
+        bases = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", ""),
+        ]
+        channels = ["Chrome", "Chrome Beta", "Chrome Dev", "Chrome SxS"]
+        for base in bases:
+            if not base:
+                continue
+            for channel in channels:
+                candidates.append(
+                    os.path.join(base, "Google", channel, "Application", "chrome.exe")
+                )
+    elif sys.platform == "darwin":
+        candidates += [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    else:  # linux / other
+        for name in (
+            "google-chrome",
+            "google-chrome-stable",
+            "google-chrome-beta",
+            "chromium",
+            "chromium-browser",
+            "chrome",
+        ):
+            found = shutil.which(name)
+            if found:
+                candidates.append(found)
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+
+    # Last resort: let undetected-chromedriver try its own detector.
+    try:
+        return uc.find_chrome_executable()
+    except Exception:
+        return None
+
+
+def detect_chrome_major_version(binary: str | None) -> int | None:
+    """Detect the installed Chrome major version so the matching driver is used."""
+    if not binary:
+        return None
+
+    if sys.platform == "win32":
+        # `chrome.exe --version` prints nothing on Windows, but the Application
+        # directory contains a version-named subfolder (e.g. .../150.0.7871.13/).
+        app_dir = os.path.dirname(binary)
+        try:
+            versions = [
+                int(m.group(1))
+                for entry in os.listdir(app_dir)
+                if (m := re.fullmatch(r"(\d+)\.\d+\.\d+\.\d+", entry))
+                and os.path.isdir(os.path.join(app_dir, entry))
+            ]
+            if versions:
+                return max(versions)
+        except OSError:
+            pass
+        return None
+
+    # macOS/Linux: the binary reports its version on stdout.
+    try:
+        out = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout
+        if m := re.search(r"(\d+)\.\d+\.\d+", out):
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
 
 
 class PadellenScraper:
@@ -32,6 +142,7 @@ class PadellenScraper:
         location_id: str = "bookings-locations-15-name",
         wait_timeout: int = 10,
         chrome_path: str | None = None,
+        chrome_version: int | None = None,
     ):
         """
         Initialize the scraper with undetected Chrome driver.
@@ -41,19 +152,46 @@ class PadellenScraper:
             location_id: Padellen location element ID
             wait_timeout: Element wait timeout in seconds
             chrome_path: Path to Chrome executable (optional, rarely needed)
+            chrome_version: Pin the Chrome major version for the driver. Leave
+                None (default) to auto-detect the installed Chrome version.
         """
         self.location_id = location_id
         self.wait_timeout = wait_timeout
 
+        # Resolve the Chrome binary (any channel) and its major version so the
+        # matching driver is fetched. Both are overridable via config.
+        binary = chrome_path or find_chrome_executable()
+        if binary:
+            logger.info(f"Using Chrome binary at {binary}")
+        else:
+            logger.warning(
+                "Could not locate a Chrome binary; relying on uc auto-detection"
+            )
+
+        version_main = chrome_version or detect_chrome_major_version(binary)
+        if version_main:
+            logger.info(f"Targeting Chrome major version {version_main}")
+        else:
+            logger.warning(
+                "Could not detect Chrome version; uc will use the latest driver"
+            )
+
         options = Options()
-        if chrome_path:
-            options.binary_location = chrome_path
         if headless:
             options.add_argument("--headless=new")
+        else:
+            # In visible mode on Windows, GPU compositing often paints the whole
+            # window gray; disabling it and maximizing forces a correct render.
+            options.add_argument("--start-maximized")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
 
-        self.driver = uc.Chrome(options=options, version_main=144)
+        self.driver = uc.Chrome(
+            options=options,
+            browser_executable_path=binary,
+            version_main=version_main,
+        )
         self.wait = WebDriverWait(self.driver, self.wait_timeout)
         logger.info("Chrome driver initialized")
 

@@ -11,7 +11,7 @@ build
 .gitignore
 .env
 .env.local
-availability_state.json
+config/
 chrome_user_data
 .DS_Store
 *.log

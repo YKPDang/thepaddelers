@@ -104,20 +104,25 @@ class StateTracker:
         slot_scores = []
         for slot in available_slots:
             slot_minutes = time_to_minutes(slot)
-            # Find closest priority time
+            # Find closest priority time. On a distance tie, the priority listed
+            # earlier wins (strict `<`), and we remember its list position so the
+            # priority_times order acts as a tiebreaker between slots too.
             min_distance = float("inf")
             closest_priority = None
-            for priority in priority_times:
+            closest_rank = len(priority_times)
+            for rank, priority in enumerate(priority_times):
                 priority_minutes = time_to_minutes(priority)
                 distance = abs(slot_minutes - priority_minutes)
                 if distance < min_distance:
                     min_distance = distance
                     closest_priority = priority
+                    closest_rank = rank
 
-            slot_scores.append((slot, min_distance, closest_priority))
+            slot_scores.append((slot, min_distance, closest_priority, closest_rank))
 
-        # Sort by distance (closer is better)
-        ranked = sorted(slot_scores, key=lambda x: x[1])
+        # Sort by distance (closer is better), then by priority order so that
+        # equally-close slots are broken by their position in priority_times.
+        ranked = sorted(slot_scores, key=lambda x: (x[1], x[3]))
         best_match = ranked[0][0] if ranked else None
 
         return {

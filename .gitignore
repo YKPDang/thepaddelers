@@ -11,3 +11,7 @@ wheels/
 
 # Environment files
 .env
+
+# Runtime config folder (contains secrets + persisted state)
+config/config.json
+config/availability_state.json

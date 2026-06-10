@@ -172,9 +172,14 @@ def main():
             location_id=config.location_id,
             wait_timeout=config.wait_timeout,
             chrome_path=config.chrome_path,
+            chrome_version=config.chrome_version,
         )
-        state_tracker = StateTracker()
-        notifier = NotificationService(config.apprise_urls)
+        state_tracker = StateTracker(config.state_file)
+        notifier = NotificationService(
+            config.apprise_urls,
+            discord_bot_token=config.discord_bot_token,
+            discord_user_ids=config.discord_user_ids,
+        )
 
         time_range = (config.time_range_start, config.time_range_end)
 

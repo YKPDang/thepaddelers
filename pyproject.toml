@@ -8,6 +8,7 @@ dependencies = [
     "apprise>=1.9.7",
     "pyright>=1.1.408",
     "python-dotenv>=1.2.1",
+    "requests>=2.32.0",
     "ruff>=0.15.0",
     "setuptools>=80.10.2",
     "undetected-chromedriver>=3.5.5",

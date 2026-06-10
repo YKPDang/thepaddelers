@@ -1,12 +1,14 @@
 services:
   padellen-monitor:
-    build: .
+    image: ghcr.io/ykpdang/padellen-signup:latest
     container_name: padellen-monitor
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      - ./config.json:/app/config.json:ro
-      - ./availability_state.json:/app/availability_state.json
+      # Single mounted folder holds config.json and the persisted state file.
+      - ./config:/app/config
     logging:
       driver: "json-file"
       options:

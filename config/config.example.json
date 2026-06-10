@@ -1,0 +1,28 @@
+{
+  "apprise_urls": [
+    "ntfys://your-token@ntfy.example.org/padellen"
+  ],
+  "discord_bot_token": "",
+  "discord_user_ids": [],
+  "target_date": "2026-02-10",
+  "time_range_start": "18:00",
+  "time_range_end": "22:00",
+  "location_id": "bookings-locations-15-name",
+  "duration_minutes": 60,
+  "priority_times": [
+    "18:00",
+    "19:00",
+    "20:00"
+  ],
+  "wait_timeout": 10,
+  "min_poll_interval": 600,
+  "max_poll_interval": 1200,
+  "max_retries": 3,
+  "retry_backoff": 2,
+  "headless": true,
+  "chrome_path": null,
+  "chrome_version": null,
+  "auto_book": false,
+  "booking_email": "",
+  "booking_password": ""
+}

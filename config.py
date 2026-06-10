@@ -15,10 +15,14 @@ class Config:
     target_date: str
     time_range_start: str
     time_range_end: str
+    # Discord bot DM notifications (optional)
+    discord_bot_token: str = ""
+    discord_user_ids: list[str] | None = None
     location_id: str = "bookings-locations-15-name"  # Padellen location element ID
     duration_minutes: int = 60  # Booking duration (60, 90, or 120)
     priority_times: list[str] | None = None  # Preferred booking times in order
     wait_timeout: int = 10  # Element wait timeout in seconds
+    state_file: str = "config/availability_state.json"  # Path to persisted state
     # Polling and retries
     min_poll_interval: int = 600  # 10 minutes
     max_poll_interval: int = 1200  # 20 minutes
@@ -26,6 +30,7 @@ class Config:
     retry_backoff: int = 2  # seconds
     # Chrome
     chrome_path: str | None = None  # Path to Chrome executable
+    chrome_version: int | None = None  # Pin driver major version (None = auto-detect)
     headless: bool = True  # Run in headless mode
     # Auto-booking
     auto_book: bool = False
@@ -35,6 +40,8 @@ class Config:
     def __post_init__(self):
         if self.priority_times is None:
             self.priority_times = []
+        if self.discord_user_ids is None:
+            self.discord_user_ids = []
 
     def validate(self) -> None:
         """Validate configuration values."""
@@ -108,7 +115,12 @@ def load_config() -> Config:
     parser.add_argument(
         "--config",
         help="Path to config file (JSON format)",
-        default=os.getenv("CONFIG_FILE", "config.json"),
+        default=os.getenv("CONFIG_FILE", "config/config.json"),
+    )
+    parser.add_argument(
+        "--state-file",
+        help="Path to the state file (default: alongside the config file)",
+        default=None,
     )
     parser.add_argument(
         "--apprise-urls", help="Comma-separated Apprise notification URLs", default=None
@@ -136,6 +148,16 @@ def load_config() -> Config:
     parser.add_argument(
         "--priority-times",
         help="Comma-separated list of preferred times (e.g., '18:00,19:00,20:00')",
+        default=None,
+    )
+    parser.add_argument(
+        "--discord-bot-token",
+        help="Discord bot token for sending DM notifications",
+        default=None,
+    )
+    parser.add_argument(
+        "--discord-user-ids",
+        help="Comma-separated Discord user IDs to DM (e.g., '123,456')",
         default=None,
     )
     parser.add_argument(
@@ -171,6 +193,12 @@ def load_config() -> Config:
     parser.add_argument(
         "--chrome-path",
         help="Path to Chrome executable (usually not needed)",
+        default=None,
+    )
+    parser.add_argument(
+        "--chrome-version",
+        type=int,
+        help="Pin Chrome driver major version (default: auto-detect)",
         default=None,
     )
     parser.add_argument(
@@ -268,6 +296,15 @@ def load_config() -> Config:
         args.wait_timeout, "WAIT_TIMEOUT", config_data, "wait_timeout", 10, int
     )
     chrome_path = _resolve(args.chrome_path, "CHROME_PATH", config_data, "chrome_path")
+    chrome_version = _resolve(
+        args.chrome_version, "CHROME_VERSION", config_data, "chrome_version", None, int
+    )
+
+    # State file: default to living next to the config file so a single mounted
+    # folder holds both config and persisted state.
+    state_file = _resolve(args.state_file, "STATE_FILE", config_data, "state_file")
+    if not state_file:
+        state_file = str(config_file.parent / "availability_state.json")
 
     # Priority times: can be comma-separated string or list
     priority_times_raw = _resolve(
@@ -277,6 +314,21 @@ def load_config() -> Config:
         priority_times = [t.strip() for t in priority_times_raw.split(",") if t.strip()]
     else:
         priority_times = priority_times_raw or []
+
+    # Discord bot DM notifications
+    discord_bot_token = _resolve(
+        args.discord_bot_token, "DISCORD_BOT_TOKEN", config_data, "discord_bot_token", ""
+    )
+    # User IDs: can be comma-separated string or list
+    discord_user_ids_raw = _resolve(
+        args.discord_user_ids, "DISCORD_USER_IDS", config_data, "discord_user_ids", []
+    )
+    if isinstance(discord_user_ids_raw, str):
+        discord_user_ids = [
+            uid.strip() for uid in discord_user_ids_raw.split(",") if uid.strip()
+        ]
+    else:
+        discord_user_ids = [str(uid) for uid in (discord_user_ids_raw or [])]
 
     # Determine headless mode
     headless = config_data.get("headless", True)
@@ -306,15 +358,19 @@ def load_config() -> Config:
         target_date=target_date,
         time_range_start=time_range_start,
         time_range_end=time_range_end,
+        discord_bot_token=discord_bot_token,
+        discord_user_ids=discord_user_ids,
         location_id=location_id,
         duration_minutes=duration_minutes,
         priority_times=priority_times,
         wait_timeout=wait_timeout,
+        state_file=state_file,
         min_poll_interval=min_poll_interval,
         max_poll_interval=max_poll_interval,
         max_retries=max_retries,
         retry_backoff=retry_backoff,
         chrome_path=chrome_path,
+        chrome_version=chrome_version,
         headless=headless,
         auto_book=auto_book,
         booking_email=booking_email,
